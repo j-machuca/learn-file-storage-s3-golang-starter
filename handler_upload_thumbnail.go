@@ -1,10 +1,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -55,11 +59,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error reading file", err)
-		return
-	}
 	videoData, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Failed to get video data", err)
@@ -69,14 +68,29 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "User is not the owner of the video", err)
 		return
 	}
-	videoThumbnails[videoID] = thumbnail{
-		mediaType: mediaType,
-		data:      fileData,
-	}
-	port := os.Getenv("PORT")
+	extension := strings.Split(mediaType, "/")[1]
+	key := make([]byte, 32)
+	rand.Read(key)
+	fileName := base64.URLEncoding.EncodeToString(key)
 
-	thumbnailURL := fmt.Sprintf("http://localhost:%s/api/thumbnails/%s", port, videoIDString)
-	videoData.ThumbnailURL = &thumbnailURL
+	path := fmt.Sprintf("/%s.%s", fileName, extension)
+	fmt.Printf("Path: %s", path)
+	path = filepath.Join(cfg.assetsRoot, path)
+
+	newFile, err := os.Create(path)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failure when creating file", err)
+		return
+	}
+	_, err = io.Copy(newFile, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error writing files", err)
+		return
+	}
+
+	thumbnailUrl := fmt.Sprintf("http://localhost:%s/%s", os.Getenv("PORT"), path)
+
+	videoData.ThumbnailURL = &thumbnailUrl
 
 	err = cfg.db.UpdateVideo(videoData)
 	if err != nil {
